@@ -635,7 +635,38 @@ uint8_t bl_flash_app(FIL *hfile)
 
 	if ( write_size || (flash_err != BL_CODE_OK) )
 	{
-		; // Display error here
+		// Clear the progress bar area and show error message
+		u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_BG);
+		u8g2_DrawBox(&m1_u8g2, 0, INFO_BOX_Y_POS_ROW_1 - M1_SUB_MENU_FONT_HEIGHT,
+		             M1_LCD_DISPLAY_WIDTH, M1_SUB_MENU_FONT_HEIGHT * 3);
+		u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_TXT);
+		u8g2_DrawStr(&m1_u8g2, 4, INFO_BOX_Y_POS_ROW_1, "Update Failed!");
+
+		// Show which kind of error occurred on the next line
+		switch (flash_err)
+		{
+		case BL_CODE_CHK_ERROR:
+			u8g2_DrawStr(&m1_u8g2, 4, INFO_BOX_Y_POS_ROW_2, "File read error");
+			break;
+		case BL_CODE_ERASE_ERROR:
+			u8g2_DrawStr(&m1_u8g2, 4, INFO_BOX_Y_POS_ROW_2, "Flash erase error");
+			break;
+		case BL_CODE_SIZE_ERROR:
+			u8g2_DrawStr(&m1_u8g2, 4, INFO_BOX_Y_POS_ROW_2, "Image size error");
+			break;
+		case BL_CODE_APP_ERROR:
+			u8g2_DrawStr(&m1_u8g2, 4, INFO_BOX_Y_POS_ROW_2, "Application error");
+			break;
+		case BL_CODE_OBP_ERROR:
+			u8g2_DrawStr(&m1_u8g2, 4, INFO_BOX_Y_POS_ROW_2, "Option bytes error");
+			break;
+		default:
+			u8g2_DrawStr(&m1_u8g2, 4, INFO_BOX_Y_POS_ROW_2, "Unknown error");
+			break;
+		}
+
+		m1_u8g2_nextpage(); // Push to display
+		M1_LOG_E(M1_LOGDB_TAG, "Update failed! err=%d, remaining=%d\r\n", flash_err, write_size);
 	}
 
 	return flash_err;
