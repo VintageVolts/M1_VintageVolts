@@ -21,6 +21,7 @@ typedef struct
 {
 	uint8_t 	stat;					// Charge / Dis-Charge
 	uint8_t     fault;					// 0 Normal, 1: Input, 2: Thermal Shutdown, 3: Safety Timer Expiration
+	uint8_t     vbus_stat;				// 0: No input, 1: USB Host, 2: Adapter, 7: OTG
 	float 		charge_voltage;			// bus voltage
 	uint16_t	charge_current;			// 0 ~ xxxx mA
 

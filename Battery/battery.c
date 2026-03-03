@@ -184,6 +184,9 @@ void battery_status_update(void)
 	// 0: no charge 1: pre-charge 2: fast charge 3: charge complete
 	power_status.stat = bq_getCHRG_STAT();
 
+	// 0: No input, 1: USB Host SDP, 2: Adapter, 7: OTG
+	power_status.vbus_stat = bq_getVBUS_STAT();
+
 	power_status.consumption_current = bat_info.current_mA;
 	//power_status.battery_voltage = bat_info.voltage_mV / 1000.0f + 0.05;
 	power_status.battery_voltage = bat_info.voltage_mV;

@@ -31,11 +31,7 @@
 #include "res_string.h"
 
 
-#if 0
-static const char * BQ2589X_VBUS_STAT_MSG[8] = {"No input", "USB Host SDP", "Adapter 3.25A", "Err", "Err", "Err", "Err", "USB OTG"};
-
-static const char * BQ2589X_CHRG_STAT_MSG[4] = {"Not charging", "Pre-charge", "Fast Charge", "Complete"};
-#endif
+/* VBUS and charge status strings are now handled via res_string (IDS_VBUS_* and IDS_CONSUMPTION etc.) */
 
 #define DELAY_BEFORE_POWER_REBOOT		1000 // ms
 
@@ -349,6 +345,19 @@ static void battery_info_gui_update(uint8_t param)
 			sprintf(stat_msg2, "%umA", SystemPowerStatus.charge_current);
 			strcat(stat_msg, stat_msg2);
 			m1_draw_text(&m1_u8g2, 2, 17,120, stat_msg, TEXT_ALIGN_LEFT);
+		}
+
+		// Show power source on row 3
+		{
+			int vbus_str_id = IDS_VBUS_NONE;
+			switch (SystemPowerStatus.vbus_stat) {
+			case 1: vbus_str_id = IDS_VBUS_USB;     break;
+			case 2: vbus_str_id = IDS_VBUS_ADAPTER;  break;
+			case 7: vbus_str_id = IDS_VBUS_OTG;      break;
+			default: vbus_str_id = IDS_VBUS_NONE;    break;
+			}
+			sprintf(stat_msg, "Src: %s", res_string(vbus_str_id));
+			m1_draw_text(&m1_u8g2, 2, 27, 120, stat_msg, TEXT_ALIGN_LEFT);
 		}
     } while (u8g2_NextPage(&m1_u8g2));
 }
