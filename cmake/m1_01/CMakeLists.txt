@@ -30,6 +30,7 @@ target_include_directories(m1_01 INTERFACE
     ../../Drivers/u8g2_cppsrc
     ../../m1_csrc
     ../../Infrared/irmp-irsnd
+    ../../Infrared
     ../../FatFs/R015
     ../../Sub_Ghz
     ../../Sub_Ghz/protocols
@@ -270,6 +271,7 @@ target_sources(m1_01 INTERFACE
     ../../Infrared/irmp-irsnd/irmp.c
     ../../Infrared/irmp-irsnd/irmpextlog.c
     ../../Infrared/irmp-irsnd/irsnd.c
+    ../../Infrared/ir_file.c
     ../../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2/cmsis_os2.c
     ../../Middlewares/Third_Party/FreeRTOS/Source/croutine.c
     ../../Middlewares/Third_Party/FreeRTOS/Source/event_groups.c

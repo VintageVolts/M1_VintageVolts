@@ -15,11 +15,16 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "stm32h5xx_hal.h"
 #include "main.h"
 #include "m1_infrared.h"
 #include "irmp.h"
 #include "irsnd.h"
+#include "ir_file.h"
+#include "m1_storage.h"
+#include "m1_log_debug.h"
 
 
 /*************************** D E F I N E S ************************************/
@@ -210,75 +215,241 @@ void infrared_universal_remotes(void)
 {
 	S_M1_Buttons_Status this_button_status;
 	S_M1_Main_Q_t q_item;
+	S_M1_file_info *f_info;
 	BaseType_t ret;
+	static IR_File_t ir_file;
+	uint8_t ir_tx_complete;
+	int16_t sel_btn = 0;          /* currently highlighted button index       */
+	int16_t scroll_top = 0;       /* first visible button in the list         */
+	bool file_loaded = false;
+	bool redraw = true;
+	bool go_back_to_browse = false;
+	char txt_buf[32];
+
+	/* Number of button rows visible on the 64-px display with small font.
+	 * Title bar takes ~12 px, each row ~10 px → 5 rows comfortably.          */
+	#define IR_BTN_VISIBLE_ROWS  5
+	#define IR_BTN_ROW_HEIGHT    10
+	#define IR_BTN_LIST_Y_START  14
 
 	m1_gui_let_update_fw();
 
-#if 0
-	m1_led_fast_blink(LED_BLINK_ON_RGB, LED_FASTBLINK_PWM_M, LED_FASTBLINK_ONTIME_L);
-
-	/* Graphic work starts here */
-    u8g2_FirstPage(&m1_u8g2); // This call required for page drawing in mode 1
-    do
-    {
-		// Draw icon and text for previous menu item
-		u8g2_SetFont(&m1_u8g2, M1_DISP_MAIN_MENU_FONT_N);
-		// Draw text at (x,y) = (26,15)
-		u8g2_DrawStr(&m1_u8g2, 26, 15, "Transmitting IR...");
-    } while (u8g2_NextPage(&m1_u8g2));
-
-	irmp_data.protocol = IRMP_RC5_PROTOCOL;//IRMP_RC5_PROTOCOL;//IRMP_NEC_PROTOCOL; // use NEC protocol
-	irmp_data.address  = 0x00FF; // set address to 0x00FF
-	irmp_data.command  = 0x0001; // set command to 0x0001
-	irmp_data.flags    = 1; // don't repeat frame
-
-	infrared_encode_sys_init();
-	irsnd_generate_tx_data(irmp_data); // make ota data
-	infrared_transmit(1); // initialize the tx
-#endif // #if 0
-	while (1 ) // Main loop of this task
+	/* ==== Outer loop: browse → load → use → BACK returns here ==== */
+	while (1)
 	{
-#if 0
-		infrared_transmit(0);
-#endif // #if 0
-		// Wait for the notification from button_event_handler_task to subfunc_handler_task.
-		// This task is the sub-task of subfunc_handler_task.
-		// The notification is given in the form of an item in the main queue.
-		// So let read the main queue.
-		ret = xQueueReceive(main_q_hdl, &q_item, portMAX_DELAY);
-		if (ret==pdTRUE)
+		/* ---- Step 1: Browse SD card for an .ir file ---- */
+		f_info = storage_browse();
+
+		if ( !f_info->file_is_selected )
 		{
-			if ( q_item.q_evt_type==Q_EVENT_KEYPAD )
+			/* User pressed Back in the file browser → exit to IR menu */
+			xQueueReset(main_q_hdl);
+			return;
+		}
+
+		/* ---- Step 2: Load and parse the selected .ir file ---- */
+		if ( !ir_file_load(f_info->dir_name, f_info->file_name, &ir_file) )
+		{
+			/* Show error on display, then go back to file browser */
+			u8g2_FirstPage(&m1_u8g2);
+			u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_TXT);
+			u8g2_SetFont(&m1_u8g2, M1_DISP_MAIN_MENU_FONT_N);
+			u8g2_DrawStr(&m1_u8g2, 10, 30, "Bad .ir file!");
+			m1_u8g2_nextpage();
+			/* Wait for any key press, then loop back to browse */
+			while (1)
 			{
-				// Notification is only sent to this task when there's any button activity,
-				// so it doesn't need to wait when reading the event from the queue
-				ret = xQueueReceive(button_events_q_hdl, &this_button_status, 0);
-				if ( this_button_status.event[BUTTON_BACK_KP_ID]==BUTTON_EVENT_CLICK ) // user wants to exit?
+				ret = xQueueReceive(main_q_hdl, &q_item, portMAX_DELAY);
+				if (ret == pdTRUE && q_item.q_evt_type == Q_EVENT_KEYPAD)
 				{
-#if 0
-					m1_led_fast_blink(LED_BLINK_ON_RGB, LED_FASTBLINK_PWM_OFF, LED_FASTBLINK_ONTIME_OFF); // Turn off
+					xQueueReceive(button_events_q_hdl, &this_button_status, 0);
+					break;
+				}
+			}
+			continue;  /* Back to file browser */
+		}
+		file_loaded = true;
 
-					; // Do extra tasks here if needed
-					if ( pir_ota_data_tx_buffer!=NULL )
-						free(pir_ota_data_tx_buffer);
+		/* ---- Step 3: Show button list and let user select & transmit ---- */
+		sel_btn = 0;
+		scroll_top = 0;
+		ir_tx_complete = 1;
+		redraw = true;
+		go_back_to_browse = false;
 
-					infrared_encode_sys_deinit();
-#endif // #if 0
-					xQueueReset(main_q_hdl); // Reset main q before return
-					break; // Exit and return to the calling task (subfunc_handler_task)
-				} // if ( m1_buttons_status[BUTTON_BACK_KP_ID]==BUTTON_EVENT_CLICK )
+		while (1) /* Button list loop */
+		{
+			/* --- Redraw the button list --- */
+			if (redraw)
+			{
+				u8g2_FirstPage(&m1_u8g2);
+				u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_TXT);
+				u8g2_SetFont(&m1_u8g2, M1_DISP_SUB_MENU_FONT_N);
+
+				/* Title bar: file name (truncated if needed) */
+				if (strlen(f_info->file_name) > 20)
+				{
+					strncpy(txt_buf, f_info->file_name, 18);
+					txt_buf[18] = '\0';
+					strcat(txt_buf, "..");
+				}
 				else
 				{
-					; // Do other things for this task, if needed
+					strcpy(txt_buf, f_info->file_name);
 				}
-			} // if ( q_item.q_evt_type==Q_EVENT_KEYPAD )
-			else if ( q_item.q_evt_type==Q_EVENT_IRRED_TX ) // Transmit completed?
-			{
-				; // Do nothing. This is just a notification to this task to take control again
-			}
-		} // if (ret==pdTRUE)
-	} // while (1 ) // Main loop of this task
+				u8g2_DrawStr(&m1_u8g2, 2, 10, txt_buf);
+				u8g2_DrawHLine(&m1_u8g2, 0, 12, 128);
 
+				/* Button list */
+				for (int i = 0; i < IR_BTN_VISIBLE_ROWS; i++)
+				{
+					int btn_idx = scroll_top + i;
+					if (btn_idx >= ir_file.button_count)
+						break;
+
+					int y = IR_BTN_LIST_Y_START + (i * IR_BTN_ROW_HEIGHT);
+
+					if (btn_idx == sel_btn)
+					{
+						/* Highlight selected item */
+						u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_TXT);
+						u8g2_DrawBox(&m1_u8g2, 0, y - 1, 128, IR_BTN_ROW_HEIGHT);
+						u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_BG);
+						u8g2_SetFont(&m1_u8g2, M1_DISP_SUB_MENU_FONT_B);
+					}
+					else
+					{
+						u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_TXT);
+						u8g2_SetFont(&m1_u8g2, M1_DISP_SUB_MENU_FONT_N);
+					}
+
+					/* Show button name + type indicator */
+					IR_Button_t *btn = &ir_file.buttons[btn_idx];
+					if (btn->type == IR_SIGNAL_PARSED)
+						snprintf(txt_buf, sizeof(txt_buf), " %s", btn->name);
+					else
+						snprintf(txt_buf, sizeof(txt_buf), "~%s", btn->name);
+
+					u8g2_DrawStr(&m1_u8g2, 2, y + 8, txt_buf);
+				}
+
+				/* Restore normal draw color */
+				u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_TXT);
+				u8g2_SetFont(&m1_u8g2, M1_DISP_SUB_MENU_FONT_N);
+
+				/* Scroll indicators */
+				if (scroll_top > 0)
+					u8g2_DrawStr(&m1_u8g2, 120, 18, "^");
+				if (scroll_top + IR_BTN_VISIBLE_ROWS < ir_file.button_count)
+					u8g2_DrawStr(&m1_u8g2, 120, 62, "v");
+
+				m1_u8g2_nextpage();
+				redraw = false;
+			}
+
+			/* --- Handle transmit state machine (if active) --- */
+			if (!ir_tx_complete)
+				infrared_transmit(0);
+
+			/* --- Wait for events --- */
+			ret = xQueueReceive(main_q_hdl, &q_item, portMAX_DELAY);
+			if (ret == pdTRUE)
+			{
+				if (q_item.q_evt_type == Q_EVENT_KEYPAD)
+				{
+					ret = xQueueReceive(button_events_q_hdl, &this_button_status, 0);
+
+					/* BACK: clean up and return to file browser */
+					if (this_button_status.event[BUTTON_BACK_KP_ID] == BUTTON_EVENT_CLICK)
+					{
+						m1_led_fast_blink(LED_BLINK_ON_RGB, LED_FASTBLINK_PWM_OFF, LED_FASTBLINK_ONTIME_OFF);
+
+						if (pir_ota_data_tx_buffer != NULL)
+							free(pir_ota_data_tx_buffer);
+
+						if (!ir_tx_complete)
+							infrared_encode_sys_deinit();
+
+						ir_file_free(&ir_file);
+						file_loaded = false;
+						xQueueReset(main_q_hdl);
+						go_back_to_browse = true;
+						break;  /* Break inner loop → back to file browser */
+					}
+
+					/* UP: move selection up */
+					if (this_button_status.event[BUTTON_UP_KP_ID] == BUTTON_EVENT_CLICK)
+					{
+						if (sel_btn > 0)
+						{
+							sel_btn--;
+							if (sel_btn < scroll_top)
+								scroll_top = sel_btn;
+							redraw = true;
+						}
+					}
+
+					/* DOWN: move selection down */
+					if (this_button_status.event[BUTTON_DOWN_KP_ID] == BUTTON_EVENT_CLICK)
+					{
+						if (sel_btn < ir_file.button_count - 1)
+						{
+							sel_btn++;
+							if (sel_btn >= scroll_top + IR_BTN_VISIBLE_ROWS)
+								scroll_top = sel_btn - IR_BTN_VISIBLE_ROWS + 1;
+							redraw = true;
+						}
+					}
+
+					/* OK: transmit the selected signal */
+					if (this_button_status.event[BUTTON_OK_KP_ID] == BUTTON_EVENT_CLICK)
+					{
+						IR_Button_t *btn = &ir_file.buttons[sel_btn];
+
+						if (btn->type == IR_SIGNAL_PARSED)
+						{
+							/* Set up IRMP data from the parsed signal */
+							irmp_data.protocol = btn->signal.parsed.protocol;
+							irmp_data.address  = (uint16_t)(btn->signal.parsed.address & 0xFFFF);
+							irmp_data.command  = (uint16_t)(btn->signal.parsed.command & 0xFFFF);
+							irmp_data.flags    = 1; /* don't repeat */
+
+							m1_led_fast_blink(LED_BLINK_ON_RGB, LED_FASTBLINK_PWM_M, LED_FASTBLINK_ONTIME_M);
+							infrared_encode_sys_init();
+							irsnd_generate_tx_data(irmp_data);
+							infrared_transmit(1);
+							ir_tx_complete = 0;
+						}
+						else if (btn->type == IR_SIGNAL_RAW)
+						{
+							/* Raw signals are not yet supported by the TX engine.
+							 * Show a brief message and skip. */
+							u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_BG);
+							u8g2_DrawBox(&m1_u8g2, 0, 12, 128, 52);
+							u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_TXT);
+							u8g2_SetFont(&m1_u8g2, M1_DISP_MAIN_MENU_FONT_N);
+							u8g2_DrawStr(&m1_u8g2, 10, 38, "Raw: not yet");
+							u8g2_DrawStr(&m1_u8g2, 10, 50, "supported");
+							m1_u8g2_nextpage();
+							vTaskDelay(pdMS_TO_TICKS(1500));
+							redraw = true;
+						}
+					}
+				} /* Q_EVENT_KEYPAD */
+				else if (q_item.q_evt_type == Q_EVENT_IRRED_TX)
+				{
+					/* Transmit completed */
+					m1_led_fast_blink(LED_BLINK_ON_RGB, LED_FASTBLINK_PWM_OFF, LED_FASTBLINK_ONTIME_OFF);
+					ir_tx_complete = 1;
+					redraw = true;
+				}
+			} /* if (ret == pdTRUE) */
+		} /* while (1) — button list loop */
+
+		if (!go_back_to_browse)
+			break;  /* Shouldn't happen, but safety exit */
+
+	} /* while (1) — outer browse loop */
 } // void infrared_universal_remotes(void)
 
 
