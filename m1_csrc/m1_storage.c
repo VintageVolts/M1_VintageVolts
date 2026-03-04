@@ -74,6 +74,7 @@ static void browse_gui_update(uint8_t sel_item, char *file_name);
 static void browse_info_box_update(uint8_t box_y, char *new_info);
 static uint8_t browse_refresh(S_M1_file_info **f_info);
 S_M1_file_info *storage_browse(void);
+S_M1_file_info *storage_browse_at(const char *start_dir);
 
 /*************** F U N C T I O N   I M P L E M E N T A T I O N ****************/
 
@@ -357,6 +358,20 @@ void storage_explore(void)
 /*============================================================================*/
 S_M1_file_info *storage_browse(void)
 {
+	return storage_browse_at(NULL);
+} // S_M1_file_info *storage_browse(void)
+
+
+
+/*============================================================================*/
+/**
+  * @brief  Browse SD card starting from a given directory
+  * @param  start_dir  Initial directory path, or NULL for SD card root
+  * @retval pointer to static file_info with selected file/dir information
+  */
+/*============================================================================*/
+S_M1_file_info *storage_browse_at(const char *start_dir)
+{
 	S_M1_Buttons_Status this_button_status;
 	S_M1_Main_Q_t q_item;
 	S_M1_file_info *f_info;
@@ -366,7 +381,7 @@ S_M1_file_info *storage_browse(void)
 	file_info.status = FB_OK;
 	file_info.file_is_selected = false;
 
-	m1_fb_init(&m1_u8g2);
+	m1_fb_init(&m1_u8g2, start_dir);
 
 	/* Graphic work starts here */
     m1_u8g2_firstpage(); // This call required for page drawing in mode 1
@@ -444,11 +459,16 @@ S_M1_file_info *storage_browse(void)
 				// Notification is only sent to this task when there's any button activity,
 				// so it doesn't need to wait when reading the event from the queue
 				ret = xQueueReceive(button_events_q_hdl, &this_button_status, 0);
-				if ( this_button_status.event[BUTTON_BACK_KP_ID]==BUTTON_EVENT_CLICK ) // user wants to exit?
+				if ( this_button_status.event[BUTTON_BACK_KP_ID]==BUTTON_EVENT_CLICK ) // user wants to go back?
 				{
-					menu_setting_storage_exit();
-					break; // Exit and return to the calling task (subfunc_handler_task)
-				} // if ( m1_buttons_status[BUTTON_BACK_KP_ID]==BUTTON_EVENT_CLICK )
+					if ( error_stat || m1_sdcard_get_status() != SD_access_OK || m1_fb_get_dir_level() == 0 )
+					{
+						menu_setting_storage_exit();
+						break; // At root (or error) - exit the file browser
+					}
+					// Not at root - let file browser navigate up one level
+					m1_fb_display(&this_button_status);
+				} // if ( this_button_status.event[BUTTON_BACK_KP_ID]==BUTTON_EVENT_CLICK )
 				else
 				{
 					if ( error_stat ) // Do nothing if there is an init error!
@@ -497,7 +517,7 @@ S_M1_file_info *storage_browse(void)
 
 	return &file_info;
 
-} // S_M1_file_info *storage_browse(void)
+} // S_M1_file_info *storage_browse_at(const char *start_dir)
 
 
 /*============================================================================*/

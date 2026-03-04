@@ -53,7 +53,7 @@ FIL m1_log_file;
 extern void m1_u8g2_firstpage(void);
 extern uint8_t m1_u8g2_nextpage(void);
 S_M1_file_info *m1_fb_display(S_M1_Buttons_Status *button_status);
-S_M1_file_browser_hdl *m1_fb_init(u8g2_t *lcd_hdl);
+S_M1_file_browser_hdl *m1_fb_init(u8g2_t *lcd_hdl, const char *start_dir);
 void m1_fb_deinit(void);
 uint8_t m1_fb_dyn_strcat(char *buffer, uint8_t num, const char *format, ...);
 uint8_t m1_fb_open_new_file(FIL *file, const char *filename);
@@ -76,17 +76,37 @@ uint8_t m1_fb_check_low_freespace(void);
 *
 */
 /******************************************************************************/
-S_M1_file_browser_hdl *m1_fb_init(u8g2_t *lcd_hdl)
+S_M1_file_browser_hdl *m1_fb_init(u8g2_t *lcd_hdl, const char *start_dir)
 {
+	const char *init_dir = (start_dir && start_dir[0]) ? start_dir : SDCARD_DEFAULT_DRIVE_PATH;
+	uint8_t depth = 0;
+
 	pfb_hdl = (S_M1_file_browser_hdl*)calloc(1, sizeof(S_M1_file_browser_hdl));
 
-	pfb_hdl->listing_index_buffer = (uint16_t *)calloc(1, sizeof(uint16_t));
-	pfb_hdl->row_index_buffer = (uint16_t *)calloc(1, sizeof(uint16_t));
-	*pfb_hdl->listing_index_buffer = 0;
-	*pfb_hdl->row_index_buffer = 0;
-	pfb_hdl->info.dir_name = malloc(strlen(SDCARD_DEFAULT_DRIVE_PATH) + 1);
+	/* Compute directory depth from path (count '/' separators after root "X:/") */
+	{
+		const char *p = strchr(init_dir, '/');  /* find first '/' (root) */
+		if (p)
+		{
+			p++;  /* skip the root '/' */
+			while (*p)
+			{
+				if (*p == '/')
+					depth++;
+				p++;
+			}
+			/* If path has content after root '/', that's at least 1 level */
+			if (*(strchr(init_dir, '/') + 1) != '\0')
+				depth++;
+		}
+	}
+
+	pfb_hdl->dir_level = depth;
+	pfb_hdl->listing_index_buffer = (uint16_t *)calloc(depth + 1, sizeof(uint16_t));
+	pfb_hdl->row_index_buffer = (uint16_t *)calloc(depth + 1, sizeof(uint16_t));
+	pfb_hdl->info.dir_name = malloc(strlen(init_dir) + 1);
 	assert(pfb_hdl->info.dir_name != NULL);
-	strcpy(pfb_hdl->info.dir_name, SDCARD_DEFAULT_DRIVE_PATH);
+	strcpy(pfb_hdl->info.dir_name, init_dir);
 	pfb_hdl->info.file_name = NULL;
 	pfb_hdl->font_w = M1_GUI_FONT_WIDTH;
 	pfb_hdl->font_h = M1_GUI_FONT_HEIGHT;
@@ -106,7 +126,7 @@ S_M1_file_browser_hdl *m1_fb_init(u8g2_t *lcd_hdl)
 	m1_u8g2_firstpage(); // Reset display RAM
 
 	return pfb_hdl;
-} // S_M1_file_browser_hdl *m1_fb_init(u8g2_t *lcd_hdl)
+} // S_M1_file_browser_hdl *m1_fb_init(u8g2_t *lcd_hdl, const char *start_dir)
 
 
 
@@ -656,6 +676,35 @@ S_M1_file_info *m1_fb_display(S_M1_Buttons_Status *button_status)
 	       			break;
 	       		}
 	       	} // else if ( button_status->event[BUTTON_OK_KP_ID]==BUTTON_EVENT_CLICK )
+
+	       	else if ( button_status->event[BUTTON_BACK_KP_ID]==BUTTON_EVENT_CLICK )
+	       	{
+	       		pfb_hdl->info.file_is_selected = FALSE;
+	       		if (pfb_hdl->dir_level) // Being at sub-directory
+	       		{
+	       			l = strlen(pfb_hdl->info.dir_name) - 1;
+	       			k = 0;
+	       			while (l >= 0 && !k)
+	       			{
+	       				if (pfb_hdl->info.dir_name[l]=='/')
+	       					k++;
+	       				pfb_hdl->info.dir_name[l] = 0;
+	       				l--;
+	       			} // while (l >= 0 && !k)
+	       			pfb_hdl->info.dir_name = (char *)realloc(pfb_hdl->info.dir_name, l + 2);
+	       			pfb_hdl->listing_index_buffer = (uint16_t *)realloc(pfb_hdl->listing_index_buffer, pfb_hdl->dir_level * sizeof(uint16_t));
+	       			pfb_hdl->row_index_buffer = (uint16_t *)realloc(pfb_hdl->row_index_buffer, pfb_hdl->dir_level * sizeof(uint16_t));
+	       			pfb_hdl->dir_level--;
+
+	       			f_closedir(&directory);
+	       			button_status = NULL; // Reset so that the conditional loop will be executed one more time
+	       			continue;
+	       		}
+	       		else // Being at root directory
+	       		{
+	       			break; // Signal caller to exit the file browser
+	       		}
+	       	} // else if ( button_status->event[BUTTON_BACK_KP_ID]==BUTTON_EVENT_CLICK )
 		} // else
 		// if (button_status==NULL)
 
@@ -946,6 +995,21 @@ void m1_fb_deinit(void)
 		pfb_hdl = NULL;
 	} // if (pfb_hdl)
 } // void m1_fb_deinit(void)
+
+
+
+/******************************************************************************/
+/*
+*	This function returns the current directory depth level of the file browser.
+*	0 = root, 1+ = subdirectory depth.
+*/
+/******************************************************************************/
+uint8_t m1_fb_get_dir_level(void)
+{
+	if (pfb_hdl)
+		return pfb_hdl->dir_level;
+	return 0;
+} // uint8_t m1_fb_get_dir_level(void)
 
 
 

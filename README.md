@@ -1,5 +1,12 @@
 <!-- See COPYING.txt for license details. -->
 
+**This is a FORK of the original MonstaTek M1 source code. It is intended for personal use, but I will make updates available as I add and vet them.**
+
+There are no guarantees to the accuracy, availability, or functionality of this code, and its use is AT YOUR OWN RISK!!! I will also be using my own versioning sequence, which most likely will not match those of Monstatek, or other forked versions of the project.
+
+The following content, and links to additional pages, is from the original Mostatek site for your convenience to learn about the M1 device. I highly recommend you first look at the primary project at the MostaTek GitHub site at: [https://github.com/Monstatek/M1](https://github.com/Monstatek/M1) before continuing through this personal repository.
+
+
 # M1 Firmware
 
 Firmware for the M1 NFC/RFID multi-protocol device, built on STM32H5.

@@ -50,8 +50,9 @@ typedef struct
 	uint8_t dir_level;
 } S_M1_file_browser_hdl;
 
-S_M1_file_browser_hdl *m1_fb_init(u8g2_t *lcd_hdl);
+S_M1_file_browser_hdl *m1_fb_init(u8g2_t *lcd_hdl, const char *start_dir);
 void m1_fb_deinit(void);
+uint8_t m1_fb_get_dir_level(void);
 void m1_fb_popup(void);
 S_M1_file_info *m1_fb_display(S_M1_Buttons_Status *button_status);
 FRESULT m1_fb_listing(const char *dir_name);

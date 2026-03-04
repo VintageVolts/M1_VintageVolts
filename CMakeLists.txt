@@ -21,7 +21,7 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 # Set the project name
-set(CMAKE_PROJECT_NAME MonstaTek_M1_v0810)
+set(CMAKE_PROJECT_NAME MonstaTek_M1_v0812)
 
 # Include toolchain file
 include("cmake/gcc-arm-none-eabi.cmake")

@@ -9,7 +9,7 @@
             "generator": "Ninja",
             "binaryDir": "${sourceDir}/out/build/${presetName}",
             "cacheVariables": {
-                "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/${presetName}",
+                "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/build/${presetName}",
                 "CMAKE_C_COMPILER": "C:/Program Files (x86)/Arm GNU Toolchain arm-none-eabi/14.2 rel1/bin/arm-none-eabi-gcc.exe",
                 "CMAKE_CXX_COMPILER": "C:/Program Files (x86)/Arm GNU Toolchain arm-none-eabi/14.2 rel1/bin/arm-none-eabi-g++.exe",
                 "CMAKE_MESSAGE_CONTEXT_SHOW": true,

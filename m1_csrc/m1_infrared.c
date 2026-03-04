@@ -225,6 +225,7 @@ void infrared_universal_remotes(void)
 	bool redraw = true;
 	bool go_back_to_browse = false;
 	char txt_buf[32];
+	char *saved_dir = NULL;       /* remember last browsed directory          */
 
 	/* Number of button rows visible on the 64-px display with small font.
 	 * Title bar takes ~12 px, each row ~10 px → 5 rows comfortably.          */
@@ -238,14 +239,21 @@ void infrared_universal_remotes(void)
 	while (1)
 	{
 		/* ---- Step 1: Browse SD card for an .ir file ---- */
-		f_info = storage_browse();
+		f_info = storage_browse_at(saved_dir);
 
 		if ( !f_info->file_is_selected )
 		{
 			/* User pressed Back in the file browser → exit to IR menu */
+			if (saved_dir) free(saved_dir);
 			xQueueReset(main_q_hdl);
 			return;
 		}
+
+		/* Save the current directory so we return here on BACK */
+		if (saved_dir) free(saved_dir);
+		saved_dir = (char *)malloc(strlen(f_info->dir_name) + 1);
+		if (saved_dir)
+			strcpy(saved_dir, f_info->dir_name);
 
 		/* ---- Step 2: Load and parse the selected .ir file ---- */
 		if ( !ir_file_load(f_info->dir_name, f_info->file_name, &ir_file) )
@@ -450,6 +458,8 @@ void infrared_universal_remotes(void)
 			break;  /* Shouldn't happen, but safety exit */
 
 	} /* while (1) — outer browse loop */
+
+	if (saved_dir) free(saved_dir);
 } // void infrared_universal_remotes(void)
 
 
