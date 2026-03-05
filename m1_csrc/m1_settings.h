@@ -21,5 +21,6 @@ void settings_buzzer(void);
 void settings_power(void);
 void settings_system(void);
 void settings_about(void);
+void settings_swap_fw_bank(void);
 
 #endif /* M1_SETTINGS_H_ */

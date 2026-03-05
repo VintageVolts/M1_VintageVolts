@@ -15,10 +15,13 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <string.h>
 #include "stm32h5xx_hal.h"
 #include "main.h"
 #include "m1_settings.h"
 #include "m1_buzzer.h"
+#include "m1_fw_update_bl.h"
+#include "m1_power_ctl.h"
 
 /*************************** D E F I N E S ************************************/
 
@@ -30,6 +33,8 @@
 #define ABOUT_BOX_Y_POS_ROW_4			40
 #define ABOUT_BOX_Y_POS_ROW_5			50
 
+#define DELAY_BEFORE_BANK_SWAP			1000 // ms
+
 //************************** S T R U C T U R E S *******************************
 
 /***************************** V A R I A B L E S ******************************/
@@ -40,6 +45,7 @@ void menu_settings_init(void);
 void menu_settings_exit(void);
 void settings_system(void);
 void settings_about(void);
+void settings_swap_fw_bank(void);
 static void settings_about_display_choice(uint8_t choice);
 
 /*************** F U N C T I O N   I M P L E M E N T A T I O N ****************/
@@ -334,8 +340,10 @@ static void settings_about_display_choice(uint8_t choice)
 
 		case 1: // Company info
 			u8g2_SetFont(&m1_u8g2, M1_DISP_SUB_MENU_FONT_N); // Set small font
-			u8g2_DrawStr(&m1_u8g2, 0, ABOUT_BOX_Y_POS_ROW_1, "MonstaTek Inc.");
-			u8g2_DrawStr(&m1_u8g2, 0, ABOUT_BOX_Y_POS_ROW_2, "San Jose, CA, USA");
+			u8g2_DrawStr(&m1_u8g2, 0, ABOUT_BOX_Y_POS_ROW_1, "VintageVolts M1 FW");
+			u8g2_DrawStr(&m1_u8g2, 0, ABOUT_BOX_Y_POS_ROW_2, "http://www.vintagevolts.com");
+			u8g2_DrawStr(&m1_u8g2, 0, ABOUT_BOX_Y_POS_ROW_4, "https://github.com/VintageVolts");
+			u8g2_DrawStr(&m1_u8g2, 0, ABOUT_BOX_Y_POS_ROW_5, "/M1_VintageVolts");
 			break;
 
 		default:
@@ -345,3 +353,150 @@ static void settings_about_display_choice(uint8_t choice)
 
 	m1_u8g2_nextpage(); // Update display RAM
 } // static void settings_about_display_choice(uint8_t choice)
+
+
+
+/*============================================================================*/
+/**
+  * @brief  Allow the user to swap between firmware banks.
+  *         Shows the active bank, reads the other bank's FW version,
+  *         and asks for confirmation before swapping + rebooting.
+  * @param  None
+  * @retval None
+  */
+/*============================================================================*/
+void settings_swap_fw_bank(void)
+{
+	S_M1_Buttons_Status this_button_status;
+	S_M1_Main_Q_t q_item;
+	BaseType_t ret;
+	char prn_buf[28];
+	uint16_t cur_bank;
+	uint8_t other_bank_valid = 0;
+	S_M1_FW_CONFIG_t other_fw_config;
+
+	cur_bank = m1_device_stat.active_bank;
+
+	/* ---- Try to read the firmware config from the other bank ---- */
+	{
+		__IO uint32_t *bu_reg_read;
+		uint16_t i, k;
+
+		bu_reg_read = (__IO uint32_t *)(FW_CONFiG_ADDRESS + M1_FLASH_BANK_SIZE);
+		k = FW_CONFiG_SIZE / 4 - 1; /* Scan for magic_number_2 */
+		for (i = 0; i < k; i++)
+		{
+			if (*bu_reg_read == FW_CONFIG_MAGIC_NUMBER_2)
+				break;
+			bu_reg_read++;
+		}
+		if (i < k)
+		{
+			/* Also run a CRC check on the other bank's image */
+			uint32_t crc32_add;
+			bu_reg_read++; /* Move past magic_number_2 to CRC32 location */
+			crc32_add = (uint32_t)bu_reg_read;
+			crc32_add -= (FW_START_ADDRESS + M1_FLASH_BANK_SIZE);
+			crc32_add /= 4; /* Convert bytes to words */
+			if (bl_crc_check(crc32_add) == BL_CODE_OK)
+			{
+				i++; /* Include CRC32 slot */
+				memcpy((uint8_t *)&other_fw_config,
+				       (__IO uint8_t *)(FW_CONFiG_ADDRESS + M1_FLASH_BANK_SIZE),
+				       i * 4);
+				other_bank_valid = 1;
+			}
+		}
+	}
+
+	/* ---- Draw the initial screen ---- */
+	u8g2_FirstPage(&m1_u8g2);
+	u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_TXT);
+	u8g2_SetFont(&m1_u8g2, M1_DISP_SUB_MENU_FONT_B);
+	u8g2_DrawStr(&m1_u8g2, 0, ABOUT_BOX_Y_POS_ROW_1, "Swap FW Bank");
+
+	u8g2_SetFont(&m1_u8g2, M1_DISP_SUB_MENU_FONT_N);
+
+	/* Show current bank and version */
+	sprintf(prn_buf, "Active: Bank %d", (cur_bank == BANK1_ACTIVE) ? 1 : 2);
+	u8g2_DrawStr(&m1_u8g2, 0, ABOUT_BOX_Y_POS_ROW_2, prn_buf);
+	sprintf(prn_buf, "Ver %d.%d.%d.%d",
+		m1_device_stat.config.fw_version_major,
+		m1_device_stat.config.fw_version_minor,
+		m1_device_stat.config.fw_version_build,
+		m1_device_stat.config.fw_version_rc);
+	u8g2_DrawStr(&m1_u8g2, 0, ABOUT_BOX_Y_POS_ROW_3, prn_buf);
+
+	if (other_bank_valid)
+	{
+		sprintf(prn_buf, "Other: Bank %d  v%d.%d.%d.%d",
+			(cur_bank == BANK1_ACTIVE) ? 2 : 1,
+			other_fw_config.fw_version_major,
+			other_fw_config.fw_version_minor,
+			other_fw_config.fw_version_build,
+			other_fw_config.fw_version_rc);
+		u8g2_DrawStr(&m1_u8g2, 0, ABOUT_BOX_Y_POS_ROW_4, prn_buf);
+	}
+	else
+	{
+		u8g2_DrawStr(&m1_u8g2, 0, ABOUT_BOX_Y_POS_ROW_4, "Other bank: no valid FW");
+	}
+
+	/* Bottom bar: BACK = cancel, OK = swap */
+	u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_TXT);
+	u8g2_DrawBox(&m1_u8g2, 0, 52, 128, 12);
+	u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_BG);
+	u8g2_SetFont(&m1_u8g2, M1_DISP_FUNC_MENU_FONT_N);
+	if (other_bank_valid)
+	{
+		u8g2_DrawStr(&m1_u8g2, 2, 61, "BACK");
+		u8g2_DrawStr(&m1_u8g2, 93, 61, "SWAP");
+	}
+	else
+	{
+		u8g2_DrawStr(&m1_u8g2, 2, 61, "BACK");
+	}
+	m1_u8g2_nextpage();
+
+	/* ---- Event loop ---- */
+	while (1)
+	{
+		ret = xQueueReceive(main_q_hdl, &q_item, portMAX_DELAY);
+		if (ret == pdTRUE)
+		{
+			if (q_item.q_evt_type == Q_EVENT_KEYPAD)
+			{
+				ret = xQueueReceive(button_events_q_hdl, &this_button_status, 0);
+
+				/* BACK or LEFT: cancel and return */
+				if (this_button_status.event[BUTTON_BACK_KP_ID] == BUTTON_EVENT_CLICK ||
+				    this_button_status.event[BUTTON_LEFT_KP_ID] == BUTTON_EVENT_CLICK)
+				{
+					xQueueReset(main_q_hdl);
+					break;
+				}
+
+				/* OK or RIGHT: swap banks (only if the other bank is valid) */
+				if (other_bank_valid &&
+				    (this_button_status.event[BUTTON_OK_KP_ID] == BUTTON_EVENT_CLICK ||
+				     this_button_status.event[BUTTON_RIGHT_KP_ID] == BUTTON_EVENT_CLICK))
+				{
+					/* Show "Swapping..." message */
+					u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_BG);
+					u8g2_DrawBox(&m1_u8g2, 0, 0, 128, 64);
+					u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_TXT);
+					u8g2_SetFont(&m1_u8g2, M1_DISP_MAIN_MENU_FONT_N);
+					u8g2_DrawStr(&m1_u8g2, 10, 25, "Swapping banks...");
+					u8g2_DrawStr(&m1_u8g2, 10, 40, "Rebooting...");
+					m1_u8g2_nextpage();
+
+					startup_config_write(BK_REGS_SELECT_DEV_OP_STAT, DEV_OP_STATUS_REBOOT);
+					vTaskDelay(pdMS_TO_TICKS(DELAY_BEFORE_BANK_SWAP));
+					m1_pre_power_down();
+					bl_swap_banks(); /* This resets the MCU and does not return */
+				}
+			} /* Q_EVENT_KEYPAD */
+		} /* if (ret == pdTRUE) */
+	} /* while (1) */
+
+} // void settings_swap_fw_bank(void)
